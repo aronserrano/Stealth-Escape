@@ -31,7 +31,6 @@
       overflow: hidden;
     }
 
-    /* scanline overlay */
     body::after {
       content: '';
       position: fixed; inset: 0;
@@ -163,14 +162,19 @@
     #gameCanvas {
       display: none;
       border: 1px solid var(--border);
-      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      box-shadow: 0 0 0 1px rgba(0,255,136,0.2);
+      outline: none;
     }
     #gameCanvas.active { display: block; }
+    #gameCanvas:focus {
+      box-shadow: 0 0 0 2px var(--green);
+    }
 
     /* ── ALERT FLASH ── */
     #alertFlash {
       position: fixed; inset: 0;
-      background: rgba(255,34,68,0.18);
+      background: rgba(255,34,68,0.22);
       pointer-events: none;
       display: none;
       z-index: 998;
@@ -189,11 +193,9 @@
     .stat-row { font-size: 13px; color: rgba(0,255,136,0.8); }
     .stat-row span { color: var(--yellow); }
 
-    /* blinking cursor */
     @keyframes blink { 50% { opacity: 0; } }
     .cursor::after { content: '_'; animation: blink 1s infinite; }
 
-    /* corner deco */
     .corner {
       position: absolute;
       width: 12px; height: 12px;
@@ -205,19 +207,11 @@
     .corner.tr { top: 4px; right: 4px; border-width: 1px 1px 0 0; }
     .corner.bl { bottom: 4px; left: 4px;  border-width: 0 0 1px 1px; }
     .corner.br { bottom: 4px; right: 4px; border-width: 0 1px 1px 0; }
-
-    #levelLabel {
-      font-family: 'Orbitron', sans-serif;
-      font-size: 11px;
-      letter-spacing: 3px;
-      color: rgba(0,255,136,0.4);
-    }
   </style>
 </head>
 <body>
 <div id="wrapper">
 
-  <!-- HUD -->
   <div id="hud">
     <div class="hud-item">
       <span class="hud-label">LEVEL</span>
@@ -237,13 +231,9 @@
     </div>
   </div>
 
-  <!-- Canvas -->
-  <canvas id="gameCanvas" width="800" height="520"></canvas>
-
-  <!-- Alert flash -->
+  <canvas id="gameCanvas" width="800" height="520" tabindex="0"></canvas>
   <div id="alertFlash"></div>
 
-  <!-- MENU SCREEN -->
   <div class="screen active" id="menuScreen">
     <div class="corner tl"></div><div class="corner tr"></div>
     <div class="corner bl"></div><div class="corner br"></div>
@@ -263,7 +253,6 @@
     <button class="btn" id="startBtn"><span>▶ START MISSION</span></button>
   </div>
 
-  <!-- GAME OVER SCREEN -->
   <div class="screen" id="overScreen">
     <div class="corner tl"></div><div class="corner tr"></div>
     <div class="corner bl"></div><div class="corner br"></div>
@@ -275,7 +264,6 @@
     <button class="btn" id="menuBtn1"><span>⌂ MAIN MENU</span></button>
   </div>
 
-  <!-- WIN SCREEN -->
   <div class="screen" id="winScreen">
     <div class="corner tl"></div><div class="corner tr"></div>
     <div class="corner bl"></div><div class="corner br"></div>
@@ -290,63 +278,191 @@
 </div>
 
 <script>
-// ─────────────────────────────────────────────
-//  PHANTOM BREAK — Stealth Escape
-//  Single-file, pure vanilla JS + Canvas
-// ─────────────────────────────────────────────
-
-const canvas  = document.getElementById('gameCanvas');
-const ctx     = canvas.getContext('2d');
+// ------------------------------------------------------------
+// PHANTOM BREAK — STEALTH ESCAPE (FIXED MOVEMENT & COLLISION)
+// ------------------------------------------------------------
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
 const W = canvas.width, H = canvas.height;
-
-// ── UI refs ──
-const menuScreen  = document.getElementById('menuScreen');
-const overScreen  = document.getElementById('overScreen');
-const winScreen   = document.getElementById('winScreen');
-const hud         = document.getElementById('hud');
-const alertFlash  = document.getElementById('alertFlash');
-const hudLevel    = document.getElementById('hudLevel');
-const hudStatus   = document.getElementById('hudStatus');
-const hudGuards   = document.getElementById('hudGuards');
-const hudTime     = document.getElementById('hudTime');
-
-// ── Constants ──
 const TILE = 40;
-const COLS = W / TILE;   // 20
-const ROWS = H / TILE;   // 13
+const COLS = W / TILE;  // 20
+const ROWS = H / TILE;  // 13
 
-// ── Game state ──
-let state = 'menu'; // menu | play | over | win
-let level = 1;
+// UI elements
+const menuScreen = document.getElementById('menuScreen');
+const overScreen = document.getElementById('overScreen');
+const winScreen = document.getElementById('winScreen');
+const hud = document.getElementById('hud');
+const alertFlashDiv = document.getElementById('alertFlash');
+const hudLevel = document.getElementById('hudLevel');
+const hudStatus = document.getElementById('hudStatus');
+const hudGuards = document.getElementById('hudGuards');
+const hudTime = document.getElementById('hudTime');
+
+// Game state
+let state = 'menu';   // menu, play, over, win
+let currentLevelIdx = 1;
 let startTime = 0;
-let elapsedTime = 0;
-let flashTimer = 0;
-let animId = null;
-let detectedTimer = 0;
+let elapsedMs = 0;
+let animFrame = null;
+let detectionAccum = 0;
 
-// ── Input ──
-const keys = {};
-document.addEventListener('keydown', e => { keys[e.code] = true; });
-document.addEventListener('keyup',   e => { keys[e.code] = false; });
-
-// ── Player ──
+// Player
 const player = {
-  x: 0, y: 0, // set per level
+  x: 0, y: 0,
   w: 16, h: 16,
-  speed: 2.2,
-  crouching: false,
-  color: '#00ff88'
+  speed: 3.2,
+  crouching: false
 };
 
-// ── Level definitions ──
-// Each cell: 0=floor, 1=wall, 2=cover(half-wall)
-// Guards: {x,y,angle,fov,range,speed,dir}
-// Camera: {x,y,angle,fov,range,speed,dir}  (fixed mount, sweeps)
-// start: [col,row]  exit: [col,row]
+// Level data holders
+let currentMap = [];
+let guardsList = [];
+let camerasList = [];
+let exitCell = { col: 0, row: 0 };
 
-const LEVELS = [
-  // ──── LEVEL 1 ────
-  {
+// Input handling (live)
+const keyState = new Set();
+document.addEventListener('keydown', (e) => {
+  const code = e.code;
+  keyState.add(code);
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyA','KeyS','KeyD','ShiftLeft','ShiftRight'].includes(code)) {
+    e.preventDefault();
+  }
+});
+document.addEventListener('keyup', (e) => { keyState.delete(e.code); });
+
+// ----- helper functions -----
+function isSolidTile(col, row) {
+  if (col < 0 || row < 0 || col >= COLS || row >= ROWS) return true;
+  const cell = currentMap[row]?.[col];
+  return cell === 1 || cell === 2;   // wall (1) or cover (2) block movement
+}
+
+// AABB collision for player vs walls
+function canMoveTo(px, py) {
+  const left = Math.floor(px / TILE);
+  const right = Math.floor((px + player.w - 1) / TILE);
+  const top = Math.floor(py / TILE);
+  const bottom = Math.floor((py + player.h - 1) / TILE);
+  for (let r = top; r <= bottom; r++) {
+    for (let c = left; c <= right; c++) {
+      if (isSolidTile(c, r)) return false;
+    }
+  }
+  return true;
+}
+
+function movePlayer(dtMult = 1.0) {
+  let dx = 0, dy = 0;
+  if (keyState.has('ArrowLeft') || keyState.has('KeyA')) dx -= 1;
+  if (keyState.has('ArrowRight') || keyState.has('KeyD')) dx += 1;
+  if (keyState.has('ArrowUp') || keyState.has('KeyW')) dy -= 1;
+  if (keyState.has('ArrowDown') || keyState.has('KeyS')) dy += 1;
+  
+  // crouching state (shift)
+  const shiftPressed = keyState.has('ShiftLeft') || keyState.has('ShiftRight');
+  player.crouching = shiftPressed;
+  let moveSpeed = player.speed;
+  if (player.crouching) moveSpeed *= 0.55;
+  
+  if (dx !== 0 || dy !== 0) {
+    const len = Math.hypot(dx, dy);
+    dx = dx / len;
+    dy = dy / len;
+  }
+  const step = moveSpeed * Math.min(1.0, dtMult);
+  if (dx !== 0) {
+    const newX = player.x + dx * step;
+    if (canMoveTo(newX, player.y)) player.x = newX;
+  }
+  if (dy !== 0) {
+    const newY = player.y + dy * step;
+    if (canMoveTo(player.x, newY)) player.y = newY;
+  }
+  // clamp borders (extra safety)
+  player.x = Math.min(Math.max(player.x, 2), W - player.w - 2);
+  player.y = Math.min(Math.max(player.y, 2), H - player.h - 2);
+}
+
+// line-of-sight (no walls or cover)
+function lineOfSightClear(x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const distance = Math.hypot(dx, dy);
+  if (distance < 1) return true;
+  const steps = Math.max(8, Math.ceil(distance / 8));
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    const cx = x1 + dx * t;
+    const cy = y1 + dy * t;
+    const col = Math.floor(cx / TILE);
+    const row = Math.floor(cy / TILE);
+    if (isSolidTile(col, row)) return false;
+  }
+  return true;
+}
+
+// detection check for guard or camera
+function isPlayerDetected(observer) {
+  const px = player.x + player.w / 2;
+  const py = player.y + player.h / 2;
+  const dx = px - observer.x;
+  const dy = py - observer.y;
+  const dist = Math.hypot(dx, dy);
+  let effectiveRange = observer.range;
+  if (player.crouching) effectiveRange *= 0.68;
+  if (dist > effectiveRange) return false;
+  
+  const angleToPlayer = Math.atan2(dy, dx);
+  let diff = angleToPlayer - observer.angle;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  if (Math.abs(diff) > observer.fov / 2) return false;
+  return lineOfSightClear(observer.x, observer.y, px, py);
+}
+
+// update watcher angles (sweep)
+function updateWatchers() {
+  guardsList.forEach(g => {
+    g.angle += g.speed * g.dir;
+    const delta = g.angle - g.baseAngle;
+    if (Math.abs(delta) > g.sweep * 0.5) g.dir *= -1;
+  });
+  camerasList.forEach(c => {
+    c.angle += c.speed * c.dir;
+    const delta = c.angle - c.baseAngle;
+    if (Math.abs(delta) > c.sweep * 0.5) c.dir *= -1;
+  });
+}
+
+// check all threats
+function checkSpotted() {
+  const allThreats = [...guardsList, ...camerasList];
+  return allThreats.some(threat => isPlayerDetected(threat));
+}
+
+// exit reached?
+function checkExitReached() {
+  const exitLeft = exitCell.col * TILE + 4;
+  const exitTop = exitCell.row * TILE + 4;
+  const exitW = TILE - 8;
+  const exitH = TILE - 8;
+  return (player.x < exitLeft + exitW && player.x + player.w > exitLeft &&
+          player.y < exitTop + exitH && player.y + player.h > exitTop);
+}
+
+// format mm:ss
+function formatTime(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+}
+
+// ----- Level definitions (3 challenging stealth maps) ------
+const LEVELS_DATA = [
+  { // LEVEL 1
     map: [
       [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
       [1,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,1],
@@ -365,16 +481,15 @@ const LEVELS = [
     start: [1, 1],
     exit:  [18, 11],
     guards: [
-      { col: 10, row: 2,  angle: Math.PI/2,  fov: 0.9, range: 160, speed: 0.012, dir: 1 },
-      { col: 5,  row: 8,  angle: 0,           fov: 0.9, range: 150, speed: 0.015, dir: -1 },
-      { col: 15, row: 6,  angle: Math.PI,     fov: 0.9, range: 155, speed: 0.013, dir: 1 },
+      { col: 10, row: 2,  angle: Math.PI/2,  fov: 0.98, range: 150, speed: 0.012, dir: 1, sweep: 1.2 },
+      { col: 5,  row: 8,  angle: 0,           fov: 0.98, range: 145, speed: 0.014, dir: -1, sweep: 1.2 },
+      { col: 15, row: 6,  angle: Math.PI,     fov: 0.98, range: 148, speed: 0.013, dir: 1, sweep: 1.2 },
     ],
     cameras: [
-      { col: 18, row: 1,  angle: Math.PI,     fov: 0.65, range: 180, speed: 0.008, dir: 1, sweep: 1.0 },
+      { col: 18, row: 1,  angle: Math.PI,     fov: 0.7, range: 170, speed: 0.008, dir: 1, sweep: 1.1 }
     ]
   },
-  // ──── LEVEL 2 ────
-  {
+  { // LEVEL 2: cross pattern
     map: [
       [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
       [1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,1,0,0,0,1],
@@ -393,18 +508,17 @@ const LEVELS = [
     start: [1, 1],
     exit:  [18, 11],
     guards: [
-      { col: 9,  row: 2,  angle: Math.PI/2, fov: 0.85, range: 160, speed: 0.018, dir: 1 },
-      { col: 3,  row: 8,  angle: 0,          fov: 0.85, range: 155, speed: 0.02,  dir: -1 },
-      { col: 16, row: 8,  angle: Math.PI,    fov: 0.85, range: 155, speed: 0.018, dir: 1  },
-      { col: 9,  row: 10, angle: -Math.PI/2, fov: 0.85, range: 150, speed: 0.016, dir: -1},
+      { col: 9,  row: 2,  angle: Math.PI/2, fov: 0.95, range: 155, speed: 0.017, dir: 1, sweep: 1.3 },
+      { col: 3,  row: 8,  angle: 0,          fov: 0.95, range: 150, speed: 0.019, dir: -1, sweep: 1.2 },
+      { col: 16, row: 8,  angle: Math.PI,    fov: 0.95, range: 150, speed: 0.018, dir: 1, sweep: 1.2 },
+      { col: 9,  row: 10, angle: -Math.PI/2, fov: 0.95, range: 145, speed: 0.016, dir: -1, sweep: 1.2 },
     ],
     cameras: [
-      { col: 1,  row: 1,  angle: 0,          fov: 0.6, range: 190, speed: 0.01,  dir: 1,  sweep: 1.1 },
-      { col: 18, row: 6,  angle: Math.PI,     fov: 0.6, range: 190, speed: 0.009, dir: -1, sweep: 1.1 },
+      { col: 1,  row: 1,  angle: 0,          fov: 0.65, range: 190, speed: 0.011, dir: 1, sweep: 1.15 },
+      { col: 18, row: 6,  angle: Math.PI,    fov: 0.65, range: 190, speed: 0.010, dir: -1, sweep: 1.15 }
     ]
   },
-  // ──── LEVEL 3 ────
-  {
+  { // LEVEL 3: tight corridors
     map: [
       [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
       [1,0,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1],
@@ -423,513 +537,362 @@ const LEVELS = [
     start: [1, 1],
     exit:  [18, 11],
     guards: [
-      { col: 9,  row: 2,  angle: Math.PI/2, fov: 0.9, range: 175, speed: 0.022, dir: 1  },
-      { col: 3,  row: 6,  angle: 0,          fov: 0.9, range: 165, speed: 0.024, dir: -1 },
-      { col: 16, row: 5,  angle: Math.PI,    fov: 0.9, range: 165, speed: 0.022, dir: 1  },
-      { col: 9,  row: 9,  angle: -Math.PI/2, fov: 0.9, range: 170, speed: 0.020, dir: -1 },
-      { col: 6,  row: 11, angle: 0,          fov: 0.85, range: 155, speed: 0.025, dir: 1 },
+      { col: 9,  row: 2,  angle: Math.PI/2, fov: 0.96, range: 160, speed: 0.022, dir: 1, sweep: 1.2 },
+      { col: 3,  row: 6,  angle: 0,          fov: 0.96, range: 155, speed: 0.023, dir: -1, sweep: 1.2 },
+      { col: 16, row: 5,  angle: Math.PI,    fov: 0.96, range: 155, speed: 0.022, dir: 1, sweep: 1.2 },
+      { col: 9,  row: 9,  angle: -Math.PI/2, fov: 0.96, range: 158, speed: 0.020, dir: -1, sweep: 1.3 },
+      { col: 6,  row: 11, angle: 0,          fov: 0.92, range: 148, speed: 0.024, dir: 1, sweep: 1.1 },
     ],
     cameras: [
-      { col: 1,  row: 1,  angle: 0,          fov: 0.65, range: 200, speed: 0.012, dir: 1,  sweep: 1.2 },
-      { col: 18, row: 1,  angle: Math.PI,     fov: 0.65, range: 200, speed: 0.011, dir: -1, sweep: 1.2 },
-      { col: 10, row: 6,  angle: -Math.PI/2,  fov: 0.65, range: 200, speed: 0.013, dir: 1,  sweep: 1.2 },
+      { col: 1,  row: 1,  angle: 0,          fov: 0.7, range: 195, speed: 0.012, dir: 1, sweep: 1.2 },
+      { col: 18, row: 1,  angle: Math.PI,    fov: 0.7, range: 195, speed: 0.011, dir: -1, sweep: 1.2 },
+      { col: 10, row: 6,  angle: -Math.PI/2, fov: 0.68, range: 190, speed: 0.012, dir: 1, sweep: 1.2 }
     ]
   }
 ];
 
-// ── Active level data ──
-let map = [];
-let guards = [];
-let cameras = [];
-let exitTile = { col: 0, row: 0 };
-
-// ── HELPERS ──
-function tileCenter(col, row) {
-  return { x: col * TILE + TILE / 2, y: row * TILE + TILE / 2 };
-}
-function rectOverlap(ax,ay,aw,ah, bx,by,bw,bh) {
-  return ax < bx+bw && ax+aw > bx && ay < by+bh && ay+ah > by;
-}
-function isWall(col, row) {
-  if (col < 0 || row < 0 || col >= COLS || row >= ROWS) return true;
-  return map[row][col] === 1;
-}
-function isSolid(col, row) { // walls + cover
-  if (col < 0 || row < 0 || col >= COLS || row >= ROWS) return true;
-  return map[row][col] === 1 || map[row][col] === 2;
-}
-function formatTime(ms) {
-  const s = Math.floor(ms / 1000);
-  return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0');
-}
-
-// ── RAY-CAST: check if p2 visible from p1 (no solid walls in between) ──
-function lineOfSight(x1, y1, x2, y2) {
-  const dx = x2 - x1, dy = y2 - y1;
-  const dist = Math.sqrt(dx*dx + dy*dy);
-  const steps = Math.ceil(dist / (TILE * 0.4));
-  for (let i = 1; i < steps; i++) {
-    const t = i / steps;
-    const cx = x1 + dx * t;
-    const cy = y1 + dy * t;
-    const tc = Math.floor(cx / TILE);
-    const tr = Math.floor(cy / TILE);
-    if (isSolid(tc, tr)) return false;
-  }
-  return true;
-}
-
-// ── INIT LEVEL ──
-function loadLevel(lvl) {
-  const def = LEVELS[(lvl - 1) % LEVELS.length];
-
+function loadLevel(levelNumber) {
+  const idx = (levelNumber - 1) % LEVELS_DATA.length;
+  const levelDef = LEVELS_DATA[idx];
   // deep copy map
-  map = def.map.map(r => [...r]);
-
-  // player
-  const s = def.start;
-  player.x = s[0] * TILE + TILE/2 - player.w/2;
-  player.y = s[1] * TILE + TILE/2 - player.h/2;
+  currentMap = levelDef.map.map(row => [...row]);
+  // set player start
+  const startCol = levelDef.start[0];
+  const startRow = levelDef.start[1];
+  player.x = startCol * TILE + (TILE/2) - player.w/2;
+  player.y = startRow * TILE + (TILE/2) - player.h/2;
   player.crouching = false;
-
-  // exit
-  exitTile = { col: def.exit[0], row: def.exit[1] };
-
-  // guards
-  guards = def.guards.map(g => {
-    const c = tileCenter(g.col, g.row);
+  exitCell = { col: levelDef.exit[0], row: levelDef.exit[1] };
+  
+  // init guards from tile center
+  guardsList = levelDef.guards.map(g => {
+    const centerX = g.col * TILE + TILE/2;
+    const centerY = g.row * TILE + TILE/2;
     return {
-      x: c.x, y: c.y,
-      baseAngle: g.angle,
-      angle: g.angle,
-      fov: g.fov,
-      range: g.range,
-      speed: g.speed,
-      dir: g.dir,
-      sweep: Math.PI * 0.6, // total sweep arc
-      detected: false
+      x: centerX, y: centerY,
+      baseAngle: g.angle, angle: g.angle,
+      fov: g.fov, range: g.range, speed: g.speed, dir: g.dir,
+      sweep: g.sweep || 1.2
     };
   });
-
-  // cameras
-  cameras = def.cameras.map(c => {
-    const pos = tileCenter(c.col, c.row);
+  camerasList = levelDef.cameras.map(c => {
+    const centerX = c.col * TILE + TILE/2;
+    const centerY = c.row * TILE + TILE/2;
     return {
-      x: pos.x, y: pos.y,
-      baseAngle: c.angle,
-      angle: c.angle,
-      fov: c.fov,
-      range: c.range,
-      speed: c.speed,
-      dir: c.dir,
-      sweep: c.sweep,
-      detected: false
+      x: centerX, y: centerY,
+      baseAngle: c.angle, angle: c.angle,
+      fov: c.fov, range: c.range, speed: c.speed, dir: c.dir,
+      sweep: c.sweep || 1.1
     };
   });
-
-  startTime = performance.now();
-  elapsedTime = 0;
-  detectedTimer = 0;
 }
 
-// ── DETECTION CHECK ──
-function checkDetection(watcher) {
-  const px = player.x + player.w / 2;
-  const py = player.y + player.h / 2;
-  const dx = px - watcher.x;
-  const dy = py - watcher.y;
-  const dist = Math.sqrt(dx*dx + dy*dy);
-
-  // crouching shrinks effective detection range by 35%
-  const effectiveRange = player.crouching ? watcher.range * 0.65 : watcher.range;
-  if (dist > effectiveRange) return false;
-
-  const angleToPlayer = Math.atan2(dy, dx);
-  let diff = angleToPlayer - watcher.angle;
-  // normalize to [-PI, PI]
-  while (diff >  Math.PI) diff -= 2 * Math.PI;
-  while (diff < -Math.PI) diff += 2 * Math.PI;
-
-  if (Math.abs(diff) > watcher.fov / 2) return false;
-  return lineOfSight(watcher.x, watcher.y, px, py);
-}
-
-// ── PLAYER MOVEMENT (with wall collision) ──
-function movePlayer(dt) {
-  const spd = player.crouching ? player.speed * 0.5 : player.speed;
-  let mx = 0, my = 0;
-
-  if (keys['ArrowLeft']  || keys['KeyA']) mx -= 1;
-  if (keys['ArrowRight'] || keys['KeyD']) mx += 1;
-  if (keys['ArrowUp']   || keys['KeyW']) my -= 1;
-  if (keys['ArrowDown'] || keys['KeyS']) my += 1;
-
-  player.crouching = !!(keys['ShiftLeft'] || keys['ShiftRight']);
-
-  if (mx && my) { mx *= 0.707; my *= 0.707; }
-
-  const nx = player.x + mx * spd;
-  const ny = player.y + my * spd;
-
-  // horizontal
-  const c1 = Math.floor(nx / TILE);
-  const c2 = Math.floor((nx + player.w - 1) / TILE);
-  const r1 = Math.floor(player.y / TILE);
-  const r2 = Math.floor((player.y + player.h - 1) / TILE);
-  if (!isSolid(c1, r1) && !isSolid(c1, r2) && !isSolid(c2, r1) && !isSolid(c2, r2)) {
-    player.x = nx;
-  }
-
-  // vertical
-  const cc1 = Math.floor(player.x / TILE);
-  const cc2 = Math.floor((player.x + player.w - 1) / TILE);
-  const rr1 = Math.floor(ny / TILE);
-  const rr2 = Math.floor((ny + player.h - 1) / TILE);
-  if (!isSolid(cc1, rr1) && !isSolid(cc1, rr2) && !isSolid(cc2, rr1) && !isSolid(cc2, rr2)) {
-    player.y = ny;
-  }
-}
-
-// ── DRAW ──
+// ----- DRAW everything (cones, walls, characters) -----
 function draw() {
   ctx.clearRect(0, 0, W, H);
-
-  // floor base
   ctx.fillStyle = '#060d14';
   ctx.fillRect(0, 0, W, H);
-
-  // ── DRAW MAP ──
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      const cell = map[r][c];
-      const x = c * TILE, y = r * TILE;
+  
+  // draw tiles
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      const cell = currentMap[row][col];
+      const x = col * TILE, y = row * TILE;
       if (cell === 1) {
-        // wall
-        ctx.fillStyle = '#0d2030';
+        ctx.fillStyle = '#0d1f2c';
         ctx.fillRect(x, y, TILE, TILE);
-        ctx.strokeStyle = '#0f2a3a';
-        ctx.lineWidth = 1;
+        ctx.strokeStyle = '#1a3a48';
         ctx.strokeRect(x+0.5, y+0.5, TILE-1, TILE-1);
-        // top highlight
-        ctx.fillStyle = 'rgba(0,180,100,0.07)';
+        ctx.fillStyle = 'rgba(0,200,100,0.05)';
         ctx.fillRect(x, y, TILE, 2);
       } else if (cell === 2) {
-        // cover block (half-wall)
-        ctx.fillStyle = '#0a1e2e';
+        ctx.fillStyle = '#0e2330';
         ctx.fillRect(x, y, TILE, TILE);
-        ctx.fillStyle = '#163040';
-        ctx.fillRect(x+3, y+3, TILE-6, TILE-6);
-        ctx.strokeStyle = '#1a4055';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x+3.5, y+3.5, TILE-7, TILE-7);
+        ctx.fillStyle = '#1f4055';
+        ctx.fillRect(x+4, y+4, TILE-8, TILE-8);
+        ctx.strokeStyle = '#2c5a70';
+        ctx.strokeRect(x+4.5, y+4.5, TILE-9, TILE-9);
       } else {
-        // floor grid
-        ctx.strokeStyle = 'rgba(0,100,60,0.08)';
-        ctx.lineWidth = 0.5;
+        ctx.strokeStyle = 'rgba(0,140,80,0.07)';
         ctx.strokeRect(x, y, TILE, TILE);
       }
     }
   }
-
-  // ── EXIT ──
-  const ex = exitTile.col * TILE, ey = exitTile.row * TILE;
-  const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 400);
-  ctx.fillStyle = `rgba(0,255,136,${0.12 + pulse * 0.12})`;
-  ctx.fillRect(ex, ey, TILE, TILE);
-  ctx.strokeStyle = `rgba(0,255,136,${0.5 + pulse * 0.4})`;
+  
+  // exit marker
+  const exX = exitCell.col * TILE, exY = exitCell.row * TILE;
+  const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 380);
+  ctx.fillStyle = `rgba(0,255,136,${0.1 + pulse * 0.15})`;
+  ctx.fillRect(exX, exY, TILE, TILE);
+  ctx.strokeStyle = `rgba(0,255,136,${0.7})`;
   ctx.lineWidth = 2;
-  ctx.strokeRect(ex+2, ey+2, TILE-4, TILE-4);
-  ctx.fillStyle = `rgba(0,255,136,${0.7 + pulse * 0.3})`;
-  ctx.font = 'bold 10px Share Tech Mono';
+  ctx.strokeRect(exX+3, exY+3, TILE-6, TILE-6);
+  ctx.fillStyle = '#ccff88';
+  ctx.font = 'bold 11px "Share Tech Mono"';
   ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('EXIT', ex + TILE/2, ey + TILE/2);
-
-  // ── DETECTION CONES ──
-  // draw with LIGHTER alpha so it's not too harsh but still readable
-  const watchers = [...guards, ...cameras];
-  watchers.forEach(w => {
-    const isDetecting = checkDetection(w);
-    const alpha = isDetecting ? 0.55 : 0.22;
-    const color = isDetecting
-      ? `rgba(255,40,60,${alpha})`
-      : `rgba(255,200,0,${alpha})`;
-
+  ctx.fillText('EXIT', exX + TILE/2, exY + TILE/2);
+  
+  // draw detection cones
+  const allWatchers = [...guardsList, ...camerasList];
+  allWatchers.forEach(w => {
+    const detecting = isPlayerDetected(w);
+    const alpha = detecting ? 0.55 : 0.2;
+    const coneColor = detecting ? `rgba(255,40,70,${alpha})` : `rgba(255,210,0,${alpha})`;
     ctx.save();
     ctx.translate(w.x, w.y);
-
-    // filled cone
     ctx.beginPath();
-    ctx.moveTo(0, 0);
+    ctx.moveTo(0,0);
     ctx.arc(0, 0, w.range, w.angle - w.fov/2, w.angle + w.fov/2);
     ctx.closePath();
-    ctx.fillStyle = color;
+    ctx.fillStyle = coneColor;
     ctx.fill();
-
-    // cone outline
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.arc(0, 0, w.range, w.angle - w.fov/2, w.angle + w.fov/2);
-    ctx.closePath();
-    ctx.strokeStyle = isDetecting ? 'rgba(255,60,80,0.6)' : 'rgba(255,200,0,0.3)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = detecting ? '#ff5577' : '#ffaa33';
+    ctx.lineWidth = 1.2;
     ctx.stroke();
-
     ctx.restore();
   });
-
-  // ── GUARDS ──
-  guards.forEach(g => {
-    // body
+  
+  // draw guards
+  guardsList.forEach(g => {
     ctx.save();
     ctx.translate(g.x, g.y);
-    // shadow
     ctx.beginPath();
-    ctx.arc(0, 2, 10, 0, Math.PI*2);
-    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.arc(0, 0, 10, 0, Math.PI*2);
+    ctx.fillStyle = '#10222e';
     ctx.fill();
-    // body circle
-    ctx.beginPath();
-    ctx.arc(0, 0, 9, 0, Math.PI*2);
-    ctx.fillStyle = '#1a2a3a';
-    ctx.fill();
-    ctx.strokeStyle = checkDetection(g) ? '#ff2244' : '#ff9900';
+    ctx.strokeStyle = isPlayerDetected(g) ? '#ff3366' : '#ffaa44';
     ctx.lineWidth = 2;
     ctx.stroke();
-    // direction indicator
     ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(Math.cos(g.angle) * 11, Math.sin(g.angle) * 11);
-    ctx.strokeStyle = checkDetection(g) ? '#ff2244' : '#ff9900';
-    ctx.lineWidth = 2;
+    ctx.moveTo(0,0);
+    ctx.lineTo(Math.cos(g.angle)*12, Math.sin(g.angle)*12);
     ctx.stroke();
-    // eye dot
     ctx.beginPath();
     ctx.arc(Math.cos(g.angle)*5, Math.sin(g.angle)*5, 3, 0, Math.PI*2);
-    ctx.fillStyle = checkDetection(g) ? '#ff2244' : '#ffaa00';
+    ctx.fillStyle = '#ffaa55';
     ctx.fill();
     ctx.restore();
   });
-
-  // ── CAMERAS (wall-mounted look) ──
-  cameras.forEach(c => {
+  
+  // draw cameras
+  camerasList.forEach(c => {
     ctx.save();
     ctx.translate(c.x, c.y);
     ctx.rotate(c.angle);
-    // mount
-    ctx.fillStyle = '#1a3040';
-    ctx.fillRect(-6, -4, 12, 8);
-    ctx.strokeStyle = checkDetection(c) ? '#ff2244' : '#00bbff';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(-6, -4, 12, 8);
-    // lens
+    ctx.fillStyle = '#1f3545';
+    ctx.fillRect(-8, -5, 14, 10);
+    ctx.strokeStyle = '#44ddff';
+    ctx.strokeRect(-8, -5, 14, 10);
     ctx.beginPath();
     ctx.arc(6, 0, 5, 0, Math.PI*2);
-    ctx.fillStyle = '#050a0e';
+    ctx.fillStyle = '#030b10';
     ctx.fill();
-    ctx.strokeStyle = checkDetection(c) ? '#ff2244' : '#00ddff';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    // lens inner
+    ctx.fillStyle = isPlayerDetected(c) ? '#ff3366' : '#22ccff';
     ctx.beginPath();
-    ctx.arc(6, 0, 2.5, 0, Math.PI*2);
-    ctx.fillStyle = checkDetection(c) ? '#ff2244' : '#00bbff';
+    ctx.arc(6, 0, 2.8, 0, Math.PI*2);
     ctx.fill();
     ctx.restore();
   });
-
-  // ── PLAYER ──
-  const px = player.x + player.w / 2;
-  const py = player.y + player.h / 2;
-  const cr = player.crouching;
-
-  // shadow
+  
+  // draw player
+  const px = player.x + player.w/2;
+  const py = player.y + player.h/2;
+  ctx.shadowBlur = 0;
   ctx.beginPath();
-  ctx.ellipse(px, py+1, cr ? 7 : 9, cr ? 4 : 5, 0, 0, Math.PI*2);
-  ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  ctx.fill();
-
-  // glow
-  const grd = ctx.createRadialGradient(px, py, 0, px, py, cr ? 14 : 18);
-  grd.addColorStop(0, 'rgba(0,255,136,0.2)');
-  grd.addColorStop(1, 'rgba(0,255,136,0)');
-  ctx.beginPath();
-  ctx.arc(px, py, cr ? 14 : 18, 0, Math.PI*2);
-  ctx.fillStyle = grd;
-  ctx.fill();
-
-  // body
-  ctx.beginPath();
-  if (cr) {
-    ctx.ellipse(px, py, 7, 5, 0, 0, Math.PI*2);
+  if (player.crouching) {
+    ctx.ellipse(px, py, 8, 5, 0, 0, Math.PI*2);
   } else {
     ctx.arc(px, py, 9, 0, Math.PI*2);
   }
-  ctx.fillStyle = '#001a0d';
+  ctx.fillStyle = '#001f14';
   ctx.fill();
   ctx.strokeStyle = '#00ff88';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 2.2;
   ctx.stroke();
-
-  // inner dot
   ctx.beginPath();
-  ctx.arc(px, py, cr ? 3 : 4, 0, Math.PI*2);
+  ctx.arc(px, py, 4, 0, Math.PI*2);
   ctx.fillStyle = '#00ff88';
   ctx.fill();
-
-  // ── CROUCH INDICATOR ──
-  if (cr) {
-    ctx.fillStyle = 'rgba(0,255,136,0.5)';
-    ctx.font = '9px Share Tech Mono';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
-    ctx.fillText('[CROUCH]', px, player.y - 2);
+  if (player.crouching) {
+    ctx.fillStyle = '#88ffaa';
+    ctx.font = '8px monospace';
+    ctx.fillText('CROUCH', px-12, py-10);
   }
 }
 
-// ── UPDATE ──
-function update(now) {
+// ----- UPDATE game loop -----
+let lastTimestamp = 0;
+function gameUpdate(now) {
   if (state !== 'play') return;
-
-  elapsedTime = now - startTime;
-
+  if (!lastTimestamp) lastTimestamp = now;
+  let dt = Math.min(0.033, (now - lastTimestamp) / 1000);
+  if (dt <= 0) dt = 0.016;
+  lastTimestamp = now;
+  elapsedMs = now - startTime;
+  
   // update HUD
-  hudTime.textContent = formatTime(elapsedTime);
-
-  const lvlDef = LEVELS[(level - 1) % LEVELS.length];
-  hudLevel.textContent = String(level).padStart(2, '0');
-  hudGuards.textContent = guards.length + cameras.length;
-
-  // move guards
-  guards.forEach(g => {
-    g.angle += g.speed * g.dir;
-    const delta = g.angle - g.baseAngle;
-    if (Math.abs(delta) > g.sweep / 2) g.dir *= -1;
-  });
-
-  // move cameras
-  cameras.forEach(c => {
-    c.angle += c.speed * c.dir;
-    const delta = c.angle - c.baseAngle;
-    if (Math.abs(delta) > c.sweep / 2) c.dir *= -1;
-  });
-
-  // move player
-  movePlayer();
-
-  // detect?
-  const allWatchers = [...guards, ...cameras];
-  const spotted = allWatchers.some(w => checkDetection(w));
-
-  if (spotted) {
+  hudTime.textContent = formatTime(elapsedMs);
+  hudLevel.textContent = String(currentLevelIdx).padStart(2,'0');
+  hudGuards.textContent = guardsList.length + camerasList.length;
+  
+  // move player with dt multiplier
+  movePlayer(dt * 60);
+  updateWatchers();
+  
+  const spottedNow = checkSpotted();
+  if (spottedNow) {
+    detectionAccum += 1;
     hudStatus.textContent = '!!! ALERT !!!';
-    hudStatus.style.color = '#ff2244';
-    detectedTimer += 1;
-    alertFlash.style.display = 'block';
-    alertFlash.style.opacity = 0.4 + 0.3 * Math.sin(Date.now()/80);
-
-    if (detectedTimer > 18) { // ~0.3s at 60fps
+    hudStatus.style.color = '#ff3366';
+    alertFlashDiv.style.display = 'block';
+    if (detectionAccum > 14) {
       triggerGameOver();
       return;
     }
   } else {
-    hudStatus.textContent = 'CLEAR';
-    hudStatus.style.color = '#00ff88';
-    detectedTimer = 0;
-    alertFlash.style.display = 'none';
+    detectionAccum = Math.max(0, detectionAccum - 0.5);
+    if (detectionAccum <= 0) {
+      hudStatus.textContent = 'CLEAR';
+      hudStatus.style.color = '#00ff88';
+      alertFlashDiv.style.display = 'none';
+    }
   }
-
-  // exit reached?
-  const playerLeft = player.x;
-  const playerTop  = player.y;
-  const exitLeft   = exitTile.col * TILE + 4;
-  const exitTop    = exitTile.row * TILE + 4;
-  if (rectOverlap(playerLeft, playerTop, player.w, player.h,
-                  exitLeft, exitTop, TILE-8, TILE-8)) {
+  
+  if (checkExitReached()) {
     triggerWin();
   }
+  draw();
+  animFrame = requestAnimationFrame(gameUpdate);
 }
 
 function triggerGameOver() {
   state = 'over';
-  cancelAnimationFrame(animId);
-  document.getElementById('overTime').textContent  = formatTime(elapsedTime);
-  document.getElementById('overLevel').textContent = level;
-  alertFlash.style.display = 'none';
+  cancelAnimationFrame(animFrame);
+  document.getElementById('overTime').textContent = formatTime(elapsedMs);
+  document.getElementById('overLevel').textContent = currentLevelIdx;
+  alertFlashDiv.style.display = 'none';
   canvas.classList.remove('active');
   hud.classList.remove('active');
   overScreen.classList.add('active');
+  lastTimestamp = 0;
 }
 
 function triggerWin() {
   state = 'win';
-  cancelAnimationFrame(animId);
-  document.getElementById('winTime').textContent   = formatTime(elapsedTime);
-  document.getElementById('winLevels').textContent = level;
-  alertFlash.style.display = 'none';
+  cancelAnimationFrame(animFrame);
+  document.getElementById('winTime').textContent = formatTime(elapsedMs);
+  document.getElementById('winLevels').textContent = currentLevelIdx;
+  alertFlashDiv.style.display = 'none';
   canvas.classList.remove('active');
   hud.classList.remove('active');
-
-  // hide 'next level' if last level
   const nextBtn = document.getElementById('nextBtn');
-  if (level >= LEVELS.length) {
+  if (currentLevelIdx >= LEVELS_DATA.length) {
     nextBtn.style.display = 'none';
   } else {
     nextBtn.style.display = '';
   }
   winScreen.classList.add('active');
+  lastTimestamp = 0;
 }
 
-// ── GAME LOOP ──
-function gameLoop(now) {
-  update(now);
-  draw();
-  animId = requestAnimationFrame(gameLoop);
-}
-
-function startGame(lvl) {
-  level = lvl;
-  // hide all screens
+function startGame(levelNum) {
+  currentLevelIdx = levelNum;
   menuScreen.classList.remove('active');
   overScreen.classList.remove('active');
   winScreen.classList.remove('active');
-  // show canvas + hud
   canvas.classList.add('active');
   hud.classList.add('active');
-
-  loadLevel(level);
+  loadLevel(currentLevelIdx);
   state = 'play';
-  cancelAnimationFrame(animId);
-  animId = requestAnimationFrame(gameLoop);
+  detectionAccum = 0;
+  startTime = performance.now();
+  elapsedMs = 0;
+  alertFlashDiv.style.display = 'none';
+  if (animFrame) cancelAnimationFrame(animFrame);
+  lastTimestamp = 0;
+  animFrame = requestAnimationFrame(gameUpdate);
+  
+  // 🔥 FIX: Auto-focus canvas when game starts
+  setTimeout(() => {
+    canvas.focus();
+  }, 100);
 }
 
-// ── BUTTONS ──
+// ----- Event Listeners -----
 document.getElementById('startBtn').addEventListener('click', () => startGame(1));
-document.getElementById('retryBtn').addEventListener('click', () => startGame(level));
+document.getElementById('retryBtn').addEventListener('click', () => startGame(currentLevelIdx));
 document.getElementById('menuBtn1').addEventListener('click', () => {
   state = 'menu';
-  cancelAnimationFrame(animId);
+  cancelAnimationFrame(animFrame);
   canvas.classList.remove('active');
   hud.classList.remove('active');
   overScreen.classList.remove('active');
   menuScreen.classList.add('active');
 });
-document.getElementById('nextBtn').addEventListener('click', () => startGame(level + 1));
+document.getElementById('nextBtn').addEventListener('click', () => {
+  if (currentLevelIdx < LEVELS_DATA.length) startGame(currentLevelIdx + 1);
+});
 document.getElementById('menuBtn2').addEventListener('click', () => {
   state = 'menu';
-  cancelAnimationFrame(animId);
+  cancelAnimationFrame(animFrame);
   canvas.classList.remove('active');
   hud.classList.remove('active');
   winScreen.classList.remove('active');
   menuScreen.classList.add('active');
 });
 
-// prevent arrow key scrolling
-window.addEventListener('keydown', e => {
-  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) {
-    e.preventDefault();
+// 🔥 FIX: Make canvas focusable and keep focus during gameplay
+canvas.style.outline = 'none';
+canvas.addEventListener('click', () => {
+  if (state === 'play') {
+    canvas.focus();
   }
 });
+
+// 🔥 FIX: Show instruction toast
+const instructionToast = document.createElement('div');
+instructionToast.textContent = '🎮 Click on the game area to activate keyboard controls!';
+instructionToast.style.cssText = `
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.85);
+  color: var(--yellow);
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: monospace;
+  z-index: 10000;
+  pointer-events: none;
+  border-left: 3px solid var(--green);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.5s;
+`;
+document.body.appendChild(instructionToast);
+
+// Show instruction when game starts
+const originalStartGameWithToast = startGame;
+window.startGame = function(levelNum) {
+  originalStartGameWithToast(levelNum);
+  instructionToast.style.opacity = '1';
+  setTimeout(() => {
+    instructionToast.style.opacity = '0';
+  }, 4000);
+};
+startGame = window.startGame;
+
+// Hide instruction on canvas click
+canvas.addEventListener('click', () => {
+  instructionToast.style.opacity = '0';
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && state !== 'play') e.preventDefault();
+});
+
+console.log('✅ Game loaded — click on canvas to focus and move!');
 </script>
 </body>
 </html>
