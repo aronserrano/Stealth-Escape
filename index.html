@@ -343,7 +343,7 @@ function isSolidTile(col, row) {
 function canMoveTo(px, py) {
   const left = Math.floor(px / TILE);
   const right = Math.floor((px + player.w - 1) / TILE);
-  const top = Math.floor(py / TILE);
+  const top = Math.flr(py / TILE);
   const bottom = Math.floor((py + player.h - 1) / TILE);
   for (let r = top; r <= bottom; r++) {
     for (let c = left; c <= right; c++) {
