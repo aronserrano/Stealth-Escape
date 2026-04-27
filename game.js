@@ -447,8 +447,8 @@ function gameUpdate(now) {
   movePlayer(dt * 60);
   updateWatchers();
 
+  if (spawnGrace > 0) spawnGrace -= dt * 1000;
   const spottedNow = spawnGrace > 0 ? false : checkSpotted();
-  if (spawnGrace > 0) spawnGrace -= (now - (lastTimestamp || now));
   if (spottedNow) {
     detectionAccum += 1;
     hudStatus.textContent  = '!!! ALERT !!!';
