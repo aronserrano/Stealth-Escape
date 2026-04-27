@@ -30,6 +30,7 @@ let elapsedMs      = 0;
 let animFrame      = null;
 let detectionAccum = 0;
 let gameFocused    = false;
+let spawnGrace     = 0;   // ms of invincibility after level load
 
 // ── Player ───────────────────────────────────────────────────
 const player = {
@@ -233,7 +234,7 @@ const LEVELS_DATA = [
       [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
       [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
     ],
-    start: [1, 1], exit: [18, 11],
+    start: [3, 11], exit: [18, 11],
     guards: [
       { col:9,  row:2,  angle: Math.PI/2,  fov:0.95, range:155, speed:0.017, dir: 1, sweep:1.3 },
       { col:3,  row:8,  angle: 0,           fov:0.95, range:150, speed:0.019, dir:-1, sweep:1.2 },
@@ -241,7 +242,7 @@ const LEVELS_DATA = [
       { col:9,  row:10, angle:-Math.PI/2,  fov:0.95, range:145, speed:0.016, dir:-1, sweep:1.2 },
     ],
     cameras: [
-      { col:1,  row:1,  angle: 0,           fov:0.65, range:190, speed:0.011, dir: 1, sweep:1.15 },
+      { col:1,  row:1,  angle: Math.PI/4,  fov:0.65, range:190, speed:0.011, dir: 1, sweep:1.15 },
       { col:18, row:6,  angle: Math.PI,    fov:0.65, range:190, speed:0.010, dir:-1, sweep:1.15 }
     ]
   },
@@ -261,7 +262,7 @@ const LEVELS_DATA = [
       [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
       [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
     ],
-    start: [1, 1], exit: [18, 11],
+    start: [1, 11], exit: [18, 11],
     guards: [
       { col:9,  row:2,  angle: Math.PI/2,  fov:0.96, range:160, speed:0.022, dir: 1, sweep:1.2 },
       { col:3,  row:6,  angle: 0,           fov:0.96, range:155, speed:0.023, dir:-1, sweep:1.2 },
@@ -270,7 +271,7 @@ const LEVELS_DATA = [
       { col:6,  row:11, angle: 0,           fov:0.92, range:148, speed:0.024, dir: 1, sweep:1.1 },
     ],
     cameras: [
-      { col:1,  row:1,  angle: 0,           fov:0.7,  range:195, speed:0.012, dir: 1, sweep:1.2 },
+      { col:1,  row:1,  angle: Math.PI/2,  fov:0.7,  range:195, speed:0.012, dir: 1, sweep:1.2 },
       { col:18, row:1,  angle: Math.PI,    fov:0.7,  range:195, speed:0.011, dir:-1, sweep:1.2 },
       { col:10, row:6,  angle:-Math.PI/2,  fov:0.68, range:190, speed:0.012, dir: 1, sweep:1.2 }
     ]
@@ -446,7 +447,8 @@ function gameUpdate(now) {
   movePlayer(dt * 60);
   updateWatchers();
 
-  const spottedNow = checkSpotted();
+  const spottedNow = spawnGrace > 0 ? false : checkSpotted();
+  if (spawnGrace > 0) spawnGrace -= (now - (lastTimestamp || now));
   if (spottedNow) {
     detectionAccum += 1;
     hudStatus.textContent  = '!!! ALERT !!!';
@@ -511,6 +513,7 @@ function startGame(levelNum) {
   loadLevel(currentLevelIdx);
   state          = 'play';
   detectionAccum = 0;
+  spawnGrace     = 1200;  // 1.2 s of invincibility on spawn
   gameFocused    = false;
   startTime      = performance.now();
   elapsedMs      = 0;
