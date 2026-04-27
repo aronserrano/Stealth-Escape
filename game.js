@@ -215,7 +215,9 @@ const LEVELS_DATA = [
       { col:15, row:6,  angle: Math.PI,     fov:0.98, range:148, speed:0.013, dir: 1, sweep:1.2 },
     ],
     cameras: [
-      { col:18, row:1,  angle: Math.PI,     fov:0.7,  range:170, speed:0.008, dir: 1, sweep:1.1 }
+      { col:18, row:1,  angle: Math.PI,     fov:0.7,  range:170, speed:0.008, dir: 1,  sweep:1.1 },
+      { col:1,  row:11, angle: 0,            fov:0.7,  range:170, speed:0.009, dir:-1,  sweep:1.1 },
+      { col:10, row:6,  angle:-Math.PI/2,   fov:0.65, range:160, speed:0.010, dir: 1,  sweep:1.0 }
     ]
   },
   {
